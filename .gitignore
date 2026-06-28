@@ -3,6 +3,12 @@
 *.m4a
 *.webm
 *.opus
+*.flac
+*.wav
+*.aiff
+*.mkv
+*.mp4
+*.webp
 *.part
 *.ytdl
 *.temp.*

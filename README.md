@@ -8,12 +8,16 @@ metadata.
 
 It is **source-aware** about quality:
 
-- If the best audio stream is **already MP3**, it's downloaded directly with no
-  re-encode (a lossless copy).
-- Otherwise the audio is transcoded to MP3 with the bitrate **capped at the
-  source** (up to a V0 ≈245 kbps ceiling), so it never wastefully upscales. For
-  YouTube this typically means ~160 kbps (Opus) or ~128 kbps (AAC) rather than
-  an inflated 245 kbps file.
+- **Lossless source** (FLAC, ALAC, WAV, …) → compressed down to a high-quality
+  **mp3 V0** (≈245 kbps). The lossless original is not kept.
+- **Lossy source** (Opus, AAC, mp3, …) → the **original track is kept as-is**
+  *and* an **mp3 is produced, capped at the source bitrate** (never above it,
+  with a V0 ceiling for high-bitrate sources).
+
+Because **YouTube audio is always lossy** (Opus ~129 kbps, or AAC), a YouTube
+link gives you **both** the original `.webm`/`.m4a` *and* a bitrate-matched
+`.mp3`. mp3-only output (no original kept) happens for lossless sources from
+other sites yt-dlp supports.
 
 > Note: for `-Playlist` downloads the quality decision is probed from the first
 > item and applied to the whole playlist.

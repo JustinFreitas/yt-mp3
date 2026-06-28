@@ -4,12 +4,13 @@
     Download the audio of one or more YouTube links as MP3 files.
 
 .DESCRIPTION
-    Wraps yt-dlp + ffmpeg to extract MP3 audio with embedded cover art and
-    metadata. It is source-aware:
-      * If the best audio stream is already MP3, it is downloaded directly with
-        no re-encode (lossless copy).
-      * Otherwise the audio is transcoded to MP3, capped so the bitrate never
-        exceeds the source (up to a V0 ~245 kbps ceiling) — no wasteful upscaling.
+    Wraps yt-dlp + ffmpeg to save audio with embedded cover art and metadata.
+    It is source-aware:
+      * Lossless source (FLAC, ALAC, WAV, ...): compressed down to MP3 V0
+        (~245 kbps); the lossless original is not kept.
+      * Lossy source (Opus, AAC, MP3, ... — all YouTube audio): the original
+        track is kept as-is AND an MP3 is produced, capped at the source bitrate
+        so it never exceeds it (V0 ceiling for high-bitrate sources).
     If yt-dlp or ffmpeg are missing, the script attempts to install them with
     winget, and prints manual install instructions if that fails.
 
@@ -102,10 +103,12 @@ $OutDir = (Resolve-Path -LiteralPath $OutDir).Path
 
 # --- Source-aware quality helpers ------------------------------------------
 
-# Upper bound for transcoded MP3 quality: V0 VBR (~245 kbps). The per-URL logic
-# also caps at the source bitrate, so this is just a ceiling for high-bitrate
-# sources.
-$MaxVbrQuality = '0'
+# V0 VBR (~245 kbps) is the target when compressing a lossless source.
+$VbrV0 = '0'
+
+# Lossless audio codecs as reported by yt-dlp's %(acodec)s. A lossless source is
+# compressed down to MP3 V0; a lossy source is kept as-is plus a capped MP3.
+$LosslessPattern = '^(flac|alac|pcm|wav|aiff|ape|tta|wavpack|wv|tak|mlp|truehd|dsd)'
 
 function Get-AudioInfo {
     # Probe the best audio stream without downloading (--print implies simulate).
@@ -130,7 +133,10 @@ function Get-Bitrate {
 }
 
 # --- Download / convert -----------------------------------------------------
+# Pin audio-only selection so we never pull the (huge) video stream — important
+# when keeping the original file via -k for lossy sources.
 $commonArgs = @(
+    '-f', 'bestaudio/best'
     '--embed-thumbnail'
     '--embed-metadata'
     '-o', (Join-Path $OutDir '%(title)s.%(ext)s')
@@ -141,26 +147,28 @@ $failed = 0
 foreach ($u in $Url) {
     Write-Host "`nProcessing: $u" -ForegroundColor Cyan
 
-    $info   = Get-AudioInfo -TargetUrl $u
-    $srcAbr = if ($info) { Get-Bitrate $info.Abr } else { 0 }
-    $isMp3  = $info -and ($info.Acodec -match '^mp3')
+    $info       = Get-AudioInfo -TargetUrl $u
+    $srcAbr     = if ($info) { Get-Bitrate $info.Abr } else { 0 }
+    $codecLabel = if ($info -and $info.Acodec) { $info.Acodec } else { 'unknown' }
+    $isLossless = $info -and ($info.Acodec -match $LosslessPattern)
 
-    if ($isMp3) {
-        # Already MP3 — grab the stream directly, no re-encode (lossless copy).
-        Write-Host "  Source is already MP3 ($srcAbr kbps) - downloading directly, no re-encode." -ForegroundColor DarkGray
-        $runArgs = @('-f', 'bestaudio[acodec^=mp3]/bestaudio') + $commonArgs
+    if ($isLossless) {
+        # Lossless source -> compress down to high-quality MP3 (V0, ~245 kbps).
+        # The lossless original is not kept.
+        Write-Host "  Source is lossless ($codecLabel) -> compressing to MP3 V0." -ForegroundColor DarkGray
+        $runArgs = @('-x', '--audio-format', 'mp3', '--audio-quality', $VbrV0) + $commonArgs
     }
     else {
-        # Transcode to MP3, capping quality so it never exceeds the source.
-        $quality = $MaxVbrQuality
+        # Lossy source -> keep the original track (-k) AND make an MP3 capped at
+        # the source bitrate so it never exceeds it (V0 ceiling for high bitrates).
+        $quality = $VbrV0
         $note    = 'V0 (~245 kbps ceiling)'
         if ($srcAbr -gt 0 -and $srcAbr -lt 245) {
             $quality = "${srcAbr}K"
             $note    = "$srcAbr kbps (matched to source)"
         }
-        $codecLabel = if ($info) { $info.Acodec } else { 'unknown' }
-        Write-Host "  Source audio: $codecLabel $srcAbr kbps -> encoding MP3 at $note." -ForegroundColor DarkGray
-        $runArgs = @('-x', '--audio-format', 'mp3', '--audio-quality', $quality) + $commonArgs
+        Write-Host "  Source is lossy ($codecLabel $srcAbr kbps) -> keeping original + MP3 at $note." -ForegroundColor DarkGray
+        $runArgs = @('-x', '--audio-format', 'mp3', '--audio-quality', $quality, '-k') + $commonArgs
     }
 
     yt-dlp @runArgs -- $u
