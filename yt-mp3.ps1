@@ -8,10 +8,9 @@
     It is source-aware:
       * Lossless source (FLAC, ALAC, WAV, ...): compressed down to MP3 V0
         (~245 kbps); the lossless original is not kept.
-      * Lossy source (Opus, AAC, MP3, ... — all YouTube audio): for remote
-        sources the original track is kept as-is AND an MP3 is produced, capped
-        at the source bitrate so it never exceeds it (V0 ceiling for high
-        bitrates).
+      * Lossy source (Opus, AAC, MP3, ... — all YouTube audio): the original
+        track is saved as-is. Pass -Mp3 to also create an MP3, capped at the
+        source bitrate so it never exceeds it (V0 ceiling for high bitrates).
     Inputs may be URLs or local audio file paths. A local source file is never
     deleted or overwritten: the script refuses any operation that would land on
     top of it.
@@ -24,12 +23,22 @@
 .PARAMETER OutDir
     Folder to save the MP3 into. Defaults to the current directory.
 
+.PARAMETER Mp3
+    For lossy sources, also create an MP3 (capped at the source bitrate). Without
+    this switch a lossy source is just saved as-is. Lossless sources are always
+    compressed to MP3 regardless of this switch.
+
 .PARAMETER Playlist
     If the URL points at a playlist, download the whole playlist instead of
     just the single video. Off by default.
 
 .EXAMPLE
+    # Lossy (YouTube): saves the original audio as-is
     .\yt-mp3.ps1 "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+.EXAMPLE
+    # Lossy + an MP3 alongside the original
+    .\yt-mp3.ps1 "https://youtu.be/abc" -Mp3
 
 .EXAMPLE
     .\yt-mp3.ps1 "https://youtu.be/abc" "https://youtu.be/def" -OutDir D:\Music
@@ -40,6 +49,8 @@ param(
     [string[]]$Url,
 
     [string]$OutDir = (Get-Location).Path,
+
+    [switch]$Mp3,
 
     [switch]$Playlist
 )
@@ -144,9 +155,10 @@ function Get-Bitrate {
 # Pin audio-only selection so we never pull the (huge) video stream — important
 # when keeping the original file via -k for lossy sources.
 $OutTemplate = (Join-Path $OutDir '%(title)s.%(ext)s')
+# Note: --embed-thumbnail is added per-branch only when producing an MP3; raw
+# audio containers like webm don't support thumbnail embedding.
 $commonArgs = @(
     '-f', 'bestaudio/best'
-    '--embed-thumbnail'
     '--embed-metadata'
     '-o', $OutTemplate
 )
@@ -173,9 +185,19 @@ foreach ($u in $Url) {
     $codecLabel = if ($info -and $info.Acodec) { $info.Acodec } else { 'unknown' }
     $isLossless = $info -and ($info.Acodec -match $LosslessPattern)
 
-    # Never delete or overwrite a local source file.
+    # Lossless is always compressed to MP3; a lossy source only when -Mp3 is set.
+    $makeMp3 = $isLossless -or $Mp3
+
+    # Lossy local source with no -Mp3: the file already exists on disk, nothing to do.
+    if (-not $makeMp3 -and $isLocal) {
+        Write-Host "  Source is lossy ($codecLabel) and already on disk -> nothing to do (pass -Mp3 to also create an MP3)." -ForegroundColor DarkGray
+        $skipped++
+        continue
+    }
+
+    # When producing an MP3, never delete or overwrite a local source file.
     $forceKeep = $false
-    if ($isLocal -and $info -and $info.DlPath) {
+    if ($makeMp3 -and $isLocal -and $info -and $info.DlPath) {
         $dlFull  = [System.IO.Path]::GetFullPath($info.DlPath)
         $mp3Full = [System.IO.Path]::ChangeExtension($dlFull, 'mp3')
         if ($mp3Full -ieq $srcFull) {
@@ -193,14 +215,19 @@ foreach ($u in $Url) {
         }
     }
 
-    if ($isLossless) {
+    if (-not $makeMp3) {
+        # Remote lossy, no -Mp3: save the original audio stream as-is (no transcode).
+        Write-Host "  Source is lossy ($codecLabel $srcAbr kbps) -> saving original audio (pass -Mp3 to also create an MP3)." -ForegroundColor DarkGray
+        $runArgs = @()
+    }
+    elseif ($isLossless) {
         # Lossless source -> compress down to high-quality MP3 (V0, ~245 kbps).
         Write-Host "  Source is lossless ($codecLabel) -> compressing to MP3 V0." -ForegroundColor DarkGray
-        $runArgs = @('-x', '--audio-format', 'mp3', '--audio-quality', $VbrV0)
+        $runArgs = @('-x', '--audio-format', 'mp3', '--audio-quality', $VbrV0, '--embed-thumbnail')
     }
     else {
-        # Lossy source -> MP3 capped at the source bitrate so it never exceeds it
-        # (V0 ceiling for high bitrates).
+        # Lossy source + -Mp3 -> MP3 capped at the source bitrate so it never
+        # exceeds it (V0 ceiling for high bitrates).
         $quality = $VbrV0
         $note    = 'V0 (~245 kbps ceiling)'
         if ($srcAbr -gt 0 -and $srcAbr -lt 245) {
@@ -211,7 +238,7 @@ foreach ($u in $Url) {
         # original already exists on disk, so there's nothing to keep a copy of.
         $keepNote = if ($isLocal) { '' } else { 'keeping original + ' }
         Write-Host "  Source is lossy ($codecLabel $srcAbr kbps) -> ${keepNote}MP3 at $note." -ForegroundColor DarkGray
-        $runArgs = @('-x', '--audio-format', 'mp3', '--audio-quality', $quality)
+        $runArgs = @('-x', '--audio-format', 'mp3', '--audio-quality', $quality, '--embed-thumbnail')
         if (-not $isLocal) { $runArgs += '-k' }
     }
 
@@ -234,4 +261,4 @@ if ($failed -gt 0) {
     exit 1
 }
 
-Write-Host "`nDone. MP3(s) saved to: $OutDir" -ForegroundColor Green
+Write-Host "`nDone. Output saved to: $OutDir" -ForegroundColor Green

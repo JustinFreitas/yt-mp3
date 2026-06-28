@@ -10,14 +10,14 @@ It is **source-aware** about quality:
 
 - **Lossless source** (FLAC, ALAC, WAV, …) → compressed down to a high-quality
   **mp3 V0** (≈245 kbps). The lossless original is not kept.
-- **Lossy source** (Opus, AAC, mp3, …) → the **original track is kept as-is**
-  *and* an **mp3 is produced, capped at the source bitrate** (never above it,
-  with a V0 ceiling for high-bitrate sources).
+- **Lossy source** (Opus, AAC, mp3, …) → the **original track is saved as-is**.
+  Pass **`-Mp3`** to also create an **mp3 capped at the source bitrate** (never
+  above it, with a V0 ceiling for high-bitrate sources).
 
 Because **YouTube audio is always lossy** (Opus ~129 kbps, or AAC), a YouTube
-link gives you **both** the original `.webm`/`.m4a` *and* a bitrate-matched
-`.mp3`. mp3-only output (no original kept) happens for lossless sources from
-other sites yt-dlp supports.
+link gives you the original `.webm`/`.m4a` by default, plus a bitrate-matched
+`.mp3` when you add `-Mp3`. Lossless sources from other sites yt-dlp supports
+are always converted to mp3.
 
 > Note: for `-Playlist` downloads the quality decision is probed from the first
 > item and applied to the whole playlist.
@@ -32,6 +32,12 @@ Multiple links and a custom output folder:
 
 ```powershell
 .\yt-mp3.ps1 "https://youtu.be/abc" "https://youtu.be/def" -OutDir D:\Music
+```
+
+Get an mp3 from a lossy source (e.g. YouTube) alongside the original:
+
+```powershell
+.\yt-mp3.ps1 "https://youtu.be/abc" -Mp3
 ```
 
 Local audio files work too (handy for converting lossless to mp3):
@@ -50,9 +56,10 @@ Download a whole playlist (off by default):
 
 | Parameter   | Description                                              |
 | ----------- | -------------------------------------------------------- |
-| `Url`       | One or more YouTube URLs (positional).                   |
-| `-OutDir`   | Where to save MP3s. Defaults to the current directory.   |
-| `-Playlist` | Download the full playlist instead of just one video.    |
+| `Url`       | One or more YouTube URLs or local file paths (positional).      |
+| `-OutDir`   | Where to save output. Defaults to the current directory.        |
+| `-Mp3`      | Also create an mp3 for lossy sources (lossless always converts). |
+| `-Playlist` | Download the full playlist instead of just one video.           |
 
 ## Dependencies
 
