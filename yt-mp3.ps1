@@ -8,9 +8,13 @@
     It is source-aware:
       * Lossless source (FLAC, ALAC, WAV, ...): compressed down to MP3 V0
         (~245 kbps); the lossless original is not kept.
-      * Lossy source (Opus, AAC, MP3, ... — all YouTube audio): the original
-        track is kept as-is AND an MP3 is produced, capped at the source bitrate
-        so it never exceeds it (V0 ceiling for high-bitrate sources).
+      * Lossy source (Opus, AAC, MP3, ... — all YouTube audio): for remote
+        sources the original track is kept as-is AND an MP3 is produced, capped
+        at the source bitrate so it never exceeds it (V0 ceiling for high
+        bitrates).
+    Inputs may be URLs or local audio file paths. A local source file is never
+    deleted or overwritten: the script refuses any operation that would land on
+    top of it.
     If yt-dlp or ffmpeg are missing, the script attempts to install them with
     winget, and prints manual install instructions if that fails.
 
@@ -112,15 +116,19 @@ $LosslessPattern = '^(flac|alac|pcm|wav|aiff|ape|tta|wavpack|wv|tak|mlp|truehd|d
 
 function Get-AudioInfo {
     # Probe the best audio stream without downloading (--print implies simulate).
+    # Also reports the path yt-dlp would download to (so we can guard local files).
     param([string]$TargetUrl, [string[]]$ExtraArgs = @())
-    $probeArgs = @('-f', 'bestaudio/best', '--no-warnings', '--print', '%(acodec)s|%(abr)s') + $ExtraArgs
+    $probeArgs = @('-f', 'bestaudio/best', '--no-warnings',
+                   '--print', '%(acodec)s|%(abr)s', '--print', 'filename',
+                   '-o', $OutTemplate) + $ExtraArgs
     if (-not $Playlist) { $probeArgs += '--no-playlist' }
-    $line = yt-dlp @probeArgs -- $TargetUrl 2>$null | Select-Object -First 1
-    if (-not $line) { return $null }
-    $parts = $line.Split('|')
+    $lines = @(yt-dlp @probeArgs -- $TargetUrl 2>$null)
+    if ($lines.Count -lt 1 -or [string]::IsNullOrWhiteSpace($lines[0])) { return $null }
+    $parts = $lines[0].Split('|')
     [pscustomobject]@{
         Acodec = $parts[0].Trim()
         Abr    = if ($parts.Count -gt 1) { $parts[1].Trim() } else { '' }
+        DlPath = if ($lines.Count -gt 1) { $lines[1].Trim() } else { '' }
     }
 }
 
@@ -135,11 +143,12 @@ function Get-Bitrate {
 # --- Download / convert -----------------------------------------------------
 # Pin audio-only selection so we never pull the (huge) video stream — important
 # when keeping the original file via -k for lossy sources.
+$OutTemplate = (Join-Path $OutDir '%(title)s.%(ext)s')
 $commonArgs = @(
     '-f', 'bestaudio/best'
     '--embed-thumbnail'
     '--embed-metadata'
-    '-o', (Join-Path $OutDir '%(title)s.%(ext)s')
+    '-o', $OutTemplate
 )
 if (-not $Playlist) { $commonArgs += '--no-playlist' }
 
@@ -148,11 +157,14 @@ foreach ($u in $Url) {
     Write-Host "`nProcessing: $u" -ForegroundColor Cyan
 
     # Local files: yt-dlp needs a file:// URI and --enable-file-urls to read them.
-    $target = $u
-    $extra  = @()
-    if (Test-Path -LiteralPath $u -PathType Leaf) {
-        $target = ([System.Uri]((Resolve-Path -LiteralPath $u).Path)).AbsoluteUri
-        $extra  = @('--enable-file-urls')
+    $isLocal = Test-Path -LiteralPath $u -PathType Leaf
+    $target  = $u
+    $extra   = @()
+    $srcFull = ''
+    if ($isLocal) {
+        $srcFull = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $u).Path)
+        $target  = ([System.Uri]$srcFull).AbsoluteUri
+        $extra   = @('--enable-file-urls')
     }
 
     $info       = Get-AudioInfo -TargetUrl $target -ExtraArgs $extra
@@ -160,24 +172,50 @@ foreach ($u in $Url) {
     $codecLabel = if ($info -and $info.Acodec) { $info.Acodec } else { 'unknown' }
     $isLossless = $info -and ($info.Acodec -match $LosslessPattern)
 
+    # Never delete or overwrite a local source file.
+    $forceKeep = $false
+    if ($isLocal -and $info -and $info.DlPath) {
+        $dlFull  = [System.IO.Path]::GetFullPath($info.DlPath)
+        $mp3Full = [System.IO.Path]::ChangeExtension($dlFull, 'mp3')
+        if ($mp3Full -ieq $srcFull) {
+            # The output MP3 would land on top of the source (e.g. an .mp3 source
+            # in the output folder). Refuse rather than overwrite the original.
+            Write-Warning "Output MP3 would overwrite the source file: $u"
+            Write-Host    "  Skipped. Use -OutDir to write the MP3 outside the source folder." -ForegroundColor Yellow
+            $failed++
+            continue
+        }
+        if ($dlFull -ieq $srcFull) {
+            # yt-dlp would work in place on the source; force -k so extraction
+            # keeps it instead of deleting it.
+            $forceKeep = $true
+        }
+    }
+
     if ($isLossless) {
         # Lossless source -> compress down to high-quality MP3 (V0, ~245 kbps).
-        # The lossless original is not kept.
         Write-Host "  Source is lossless ($codecLabel) -> compressing to MP3 V0." -ForegroundColor DarkGray
-        $runArgs = @('-x', '--audio-format', 'mp3', '--audio-quality', $VbrV0) + $commonArgs
+        $runArgs = @('-x', '--audio-format', 'mp3', '--audio-quality', $VbrV0)
     }
     else {
-        # Lossy source -> keep the original track (-k) AND make an MP3 capped at
-        # the source bitrate so it never exceeds it (V0 ceiling for high bitrates).
+        # Lossy source -> MP3 capped at the source bitrate so it never exceeds it
+        # (V0 ceiling for high bitrates).
         $quality = $VbrV0
         $note    = 'V0 (~245 kbps ceiling)'
         if ($srcAbr -gt 0 -and $srcAbr -lt 245) {
             $quality = "${srcAbr}K"
             $note    = "$srcAbr kbps (matched to source)"
         }
-        Write-Host "  Source is lossy ($codecLabel $srcAbr kbps) -> keeping original + MP3 at $note." -ForegroundColor DarkGray
-        $runArgs = @('-x', '--audio-format', 'mp3', '--audio-quality', $quality, '-k') + $commonArgs
+        # Keep the original alongside the MP3 only for remote sources; a local
+        # original already exists on disk, so there's nothing to keep a copy of.
+        $keepNote = if ($isLocal) { '' } else { 'keeping original + ' }
+        Write-Host "  Source is lossy ($codecLabel $srcAbr kbps) -> ${keepNote}MP3 at $note." -ForegroundColor DarkGray
+        $runArgs = @('-x', '--audio-format', 'mp3', '--audio-quality', $quality)
+        if (-not $isLocal) { $runArgs += '-k' }
     }
+
+    if ($forceKeep -and ($runArgs -notcontains '-k')) { $runArgs += '-k' }
+    $runArgs += $commonArgs
 
     yt-dlp @runArgs @extra -- $target
     if ($LASTEXITCODE -ne 0) {
