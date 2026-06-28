@@ -15,7 +15,7 @@
     winget, and prints manual install instructions if that fails.
 
 .PARAMETER Url
-    One or more YouTube video (or audio) URLs.
+    One or more YouTube video (or audio) URLs, or local audio file paths.
 
 .PARAMETER OutDir
     Folder to save the MP3 into. Defaults to the current directory.
@@ -112,8 +112,8 @@ $LosslessPattern = '^(flac|alac|pcm|wav|aiff|ape|tta|wavpack|wv|tak|mlp|truehd|d
 
 function Get-AudioInfo {
     # Probe the best audio stream without downloading (--print implies simulate).
-    param([string]$TargetUrl)
-    $probeArgs = @('-f', 'bestaudio/best', '--no-warnings', '--print', '%(acodec)s|%(abr)s')
+    param([string]$TargetUrl, [string[]]$ExtraArgs = @())
+    $probeArgs = @('-f', 'bestaudio/best', '--no-warnings', '--print', '%(acodec)s|%(abr)s') + $ExtraArgs
     if (-not $Playlist) { $probeArgs += '--no-playlist' }
     $line = yt-dlp @probeArgs -- $TargetUrl 2>$null | Select-Object -First 1
     if (-not $line) { return $null }
@@ -147,7 +147,15 @@ $failed = 0
 foreach ($u in $Url) {
     Write-Host "`nProcessing: $u" -ForegroundColor Cyan
 
-    $info       = Get-AudioInfo -TargetUrl $u
+    # Local files: yt-dlp needs a file:// URI and --enable-file-urls to read them.
+    $target = $u
+    $extra  = @()
+    if (Test-Path -LiteralPath $u -PathType Leaf) {
+        $target = ([System.Uri]((Resolve-Path -LiteralPath $u).Path)).AbsoluteUri
+        $extra  = @('--enable-file-urls')
+    }
+
+    $info       = Get-AudioInfo -TargetUrl $target -ExtraArgs $extra
     $srcAbr     = if ($info) { Get-Bitrate $info.Abr } else { 0 }
     $codecLabel = if ($info -and $info.Acodec) { $info.Acodec } else { 'unknown' }
     $isLossless = $info -and ($info.Acodec -match $LosslessPattern)
@@ -171,7 +179,7 @@ foreach ($u in $Url) {
         $runArgs = @('-x', '--audio-format', 'mp3', '--audio-quality', $quality, '-k') + $commonArgs
     }
 
-    yt-dlp @runArgs -- $u
+    yt-dlp @runArgs @extra -- $target
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "yt-dlp exited with code $LASTEXITCODE for: $u"
         $failed++

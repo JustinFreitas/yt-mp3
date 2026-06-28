@@ -34,6 +34,12 @@ Multiple links and a custom output folder:
 .\yt-mp3.ps1 "https://youtu.be/abc" "https://youtu.be/def" -OutDir D:\Music
 ```
 
+Local audio files work too (handy for converting lossless to mp3):
+
+```powershell
+.\yt-mp3.ps1 "E:\Music\track.flac"
+```
+
 Download a whole playlist (off by default):
 
 ```powershell
