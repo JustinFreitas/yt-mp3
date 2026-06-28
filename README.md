@@ -9,7 +9,8 @@ metadata.
 It is **source-aware** about quality:
 
 - **Lossless source** (FLAC, ALAC, WAV, …) → compressed down to a high-quality
-  **mp3 V0** (≈245 kbps). The lossless original is not kept.
+  **mp3 V0** (≈245 kbps). Pass **`-Flac`** to keep the lossless original as-is
+  instead (add `-Mp3` to keep the lossless original **and** make an mp3).
 - **Lossy source** (Opus, AAC, mp3, …) → the **original track is saved as-is**.
   Pass **`-Mp3`** to also create an **mp3 capped at the source bitrate** (never
   above it, with a V0 ceiling for high-bitrate sources).
@@ -58,7 +59,8 @@ Download a whole playlist (off by default):
 | ----------- | -------------------------------------------------------- |
 | `Url`       | One or more YouTube URLs or local file paths (positional).      |
 | `-OutDir`   | Where to save output. Defaults to the current directory.        |
-| `-Mp3`      | Also create an mp3 for lossy sources (lossless always converts). |
+| `-Mp3`      | Also create an mp3 for lossy sources (or alongside a kept `-Flac`). |
+| `-Flac`     | Keep a lossless source as-is instead of converting it to mp3.    |
 | `-Playlist` | Download the full playlist instead of just one video.           |
 
 ## Dependencies

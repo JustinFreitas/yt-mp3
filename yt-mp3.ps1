@@ -7,7 +7,8 @@
     Wraps yt-dlp + ffmpeg to save audio with embedded cover art and metadata.
     It is source-aware:
       * Lossless source (FLAC, ALAC, WAV, ...): compressed down to MP3 V0
-        (~245 kbps); the lossless original is not kept.
+        (~245 kbps); the lossless original is not kept. Pass -Flac to keep the
+        lossless source as-is instead (add -Mp3 to also produce an MP3).
       * Lossy source (Opus, AAC, MP3, ... — all YouTube audio): the original
         track is saved as-is. Pass -Mp3 to also create an MP3, capped at the
         source bitrate so it never exceeds it (V0 ceiling for high bitrates).
@@ -25,8 +26,13 @@
 
 .PARAMETER Mp3
     For lossy sources, also create an MP3 (capped at the source bitrate). Without
-    this switch a lossy source is just saved as-is. Lossless sources are always
-    compressed to MP3 regardless of this switch.
+    this switch a lossy source is just saved as-is. With -Flac, also produce an
+    MP3 alongside the kept lossless original.
+
+.PARAMETER Flac
+    Keep a lossless source as-is instead of converting it to MP3. By default a
+    lossless source is compressed to MP3 V0; with -Flac the original is saved
+    unchanged (combine with -Mp3 to keep the lossless original AND make an MP3).
 
 .PARAMETER Playlist
     If the URL points at a playlist, download the whole playlist instead of
@@ -51,6 +57,8 @@ param(
     [string]$OutDir = (Get-Location).Path,
 
     [switch]$Mp3,
+
+    [switch]$Flac,
 
     [switch]$Playlist
 )
@@ -185,12 +193,23 @@ foreach ($u in $Url) {
     $codecLabel = if ($info -and $info.Acodec) { $info.Acodec } else { 'unknown' }
     $isLossless = $info -and ($info.Acodec -match $LosslessPattern)
 
-    # Lossless is always compressed to MP3; a lossy source only when -Mp3 is set.
-    $makeMp3 = $isLossless -or $Mp3
+    # Decide the two outputs for this source:
+    #   keepOriginal - save the source audio as-is
+    #   makeMp3      - also produce an MP3
+    if ($isLossless) {
+        # Lossless: convert to MP3 by default; -Flac keeps the original instead.
+        $keepOriginal = [bool]$Flac
+        $makeMp3      = (-not $Flac) -or $Mp3
+    }
+    else {
+        # Lossy: always keep the original; -Mp3 additionally produces an MP3.
+        $keepOriginal = $true
+        $makeMp3      = [bool]$Mp3
+    }
 
-    # Lossy local source with no -Mp3: the file already exists on disk, nothing to do.
+    # No MP3 to make and a local source: the original is already on disk -> no-op.
     if (-not $makeMp3 -and $isLocal) {
-        Write-Host "  Source is lossy ($codecLabel) and already on disk -> nothing to do (pass -Mp3 to also create an MP3)." -ForegroundColor DarkGray
+        Write-Host "  Source is $codecLabel and already on disk -> nothing to do." -ForegroundColor DarkGray
         $skipped++
         continue
     }
@@ -216,18 +235,20 @@ foreach ($u in $Url) {
     }
 
     if (-not $makeMp3) {
-        # Remote lossy, no -Mp3: save the original audio stream as-is (no transcode).
-        Write-Host "  Source is lossy ($codecLabel $srcAbr kbps) -> saving original audio (pass -Mp3 to also create an MP3)." -ForegroundColor DarkGray
+        # Save the original audio stream as-is (no transcode).
+        Write-Host "  Source is $codecLabel -> saving original audio as-is." -ForegroundColor DarkGray
         $runArgs = @()
     }
     elseif ($isLossless) {
-        # Lossless source -> compress down to high-quality MP3 (V0, ~245 kbps).
-        Write-Host "  Source is lossless ($codecLabel) -> compressing to MP3 V0." -ForegroundColor DarkGray
+        # Lossless -> compress down to high-quality MP3 (V0, ~245 kbps).
+        $keepNote = if ($keepOriginal -and -not $isLocal) { 'keeping lossless + ' } else { '' }
+        Write-Host "  Source is lossless ($codecLabel) -> ${keepNote}MP3 V0." -ForegroundColor DarkGray
         $runArgs = @('-x', '--audio-format', 'mp3', '--audio-quality', $VbrV0, '--embed-thumbnail')
+        if ($keepOriginal -and -not $isLocal) { $runArgs += '-k' }
     }
     else {
-        # Lossy source + -Mp3 -> MP3 capped at the source bitrate so it never
-        # exceeds it (V0 ceiling for high bitrates).
+        # Lossy + -Mp3 -> MP3 capped at the source bitrate so it never exceeds it
+        # (V0 ceiling for high bitrates).
         $quality = $VbrV0
         $note    = 'V0 (~245 kbps ceiling)'
         if ($srcAbr -gt 0 -and $srcAbr -lt 245) {
@@ -236,10 +257,10 @@ foreach ($u in $Url) {
         }
         # Keep the original alongside the MP3 only for remote sources; a local
         # original already exists on disk, so there's nothing to keep a copy of.
-        $keepNote = if ($isLocal) { '' } else { 'keeping original + ' }
+        $keepNote = if ($keepOriginal -and -not $isLocal) { 'keeping original + ' } else { '' }
         Write-Host "  Source is lossy ($codecLabel $srcAbr kbps) -> ${keepNote}MP3 at $note." -ForegroundColor DarkGray
         $runArgs = @('-x', '--audio-format', 'mp3', '--audio-quality', $quality, '--embed-thumbnail')
-        if (-not $isLocal) { $runArgs += '-k' }
+        if ($keepOriginal -and -not $isLocal) { $runArgs += '-k' }
     }
 
     if ($forceKeep -and ($runArgs -notcontains '-k')) { $runArgs += '-k' }
@@ -253,7 +274,7 @@ foreach ($u in $Url) {
 }
 
 if ($skipped -gt 0) {
-    Write-Host "$skipped item(s) skipped to protect the source file." -ForegroundColor Yellow
+    Write-Host "$skipped item(s) skipped." -ForegroundColor Yellow
 }
 
 if ($failed -gt 0) {
