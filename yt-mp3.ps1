@@ -152,7 +152,8 @@ $commonArgs = @(
 )
 if (-not $Playlist) { $commonArgs += '--no-playlist' }
 
-$failed = 0
+$failed  = 0
+$skipped = 0
 foreach ($u in $Url) {
     Write-Host "`nProcessing: $u" -ForegroundColor Cyan
 
@@ -181,8 +182,8 @@ foreach ($u in $Url) {
             # The output MP3 would land on top of the source (e.g. an .mp3 source
             # in the output folder). Refuse rather than overwrite the original.
             Write-Warning "Output MP3 would overwrite the source file: $u"
-            Write-Host    "  Skipped. Use -OutDir to write the MP3 outside the source folder." -ForegroundColor Yellow
-            $failed++
+            Write-Host    "  Skipped (source preserved). Use -OutDir to write the MP3 outside the source folder." -ForegroundColor Yellow
+            $skipped++
             continue
         }
         if ($dlFull -ieq $srcFull) {
@@ -222,6 +223,10 @@ foreach ($u in $Url) {
         Write-Warning "yt-dlp exited with code $LASTEXITCODE for: $u"
         $failed++
     }
+}
+
+if ($skipped -gt 0) {
+    Write-Host "$skipped item(s) skipped to protect the source file." -ForegroundColor Yellow
 }
 
 if ($failed -gt 0) {
