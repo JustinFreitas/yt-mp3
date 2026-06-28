@@ -3,8 +3,20 @@
 A small PowerShell script that saves the audio of a YouTube link as an MP3.
 
 It wraps [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) and
-[`ffmpeg`](https://ffmpeg.org/), extracting best-quality VBR MP3 audio (~V0,
-≈245 kbps) with embedded cover art and metadata.
+[`ffmpeg`](https://ffmpeg.org/), saving MP3 audio with embedded cover art and
+metadata.
+
+It is **source-aware** about quality:
+
+- If the best audio stream is **already MP3**, it's downloaded directly with no
+  re-encode (a lossless copy).
+- Otherwise the audio is transcoded to MP3 with the bitrate **capped at the
+  source** (up to a V0 ≈245 kbps ceiling), so it never wastefully upscales. For
+  YouTube this typically means ~160 kbps (Opus) or ~128 kbps (AAC) rather than
+  an inflated 245 kbps file.
+
+> Note: for `-Playlist` downloads the quality decision is probed from the first
+> item and applied to the whole playlist.
 
 ## Usage
 
