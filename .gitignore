@@ -1,0 +1,8 @@
+# Downloaded audio / intermediate files
+*.mp3
+*.m4a
+*.webm
+*.opus
+*.part
+*.ytdl
+*.temp.*
