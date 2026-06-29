@@ -13,10 +13,13 @@
         track is saved as-is. Pass -Mp3 to also create an MP3, capped at the
         source bitrate so it never exceeds it (V0 ceiling for high bitrates).
     Inputs may be URLs or local audio file paths. A local source file is never
-    deleted or overwritten: the script refuses any operation that would land on
-    top of it.
+    deleted, overwritten, or retagged: the script only ever modifies files it
+    produces, and refuses any operation that would land on top of the source.
+    Each produced file is ReplayGain-scanned (track gain) by default; pass
+    -NoReplayGain to skip.
     If yt-dlp or ffmpeg are missing, the script attempts to install them with
-    winget, and prints manual install instructions if that fails.
+    winget, and prints manual install instructions if that fails. rsgain (for
+    ReplayGain) is auto-downloaded from GitHub on first use.
 
 .PARAMETER Url
     One or more YouTube video (or audio) URLs, or local audio file paths.
@@ -33,6 +36,11 @@
     Keep a lossless source as-is instead of converting it to MP3. By default a
     lossless source is compressed to MP3 V0; with -Flac the original is saved
     unchanged (combine with -Mp3 to keep the lossless original AND make an MP3).
+
+.PARAMETER NoReplayGain
+    Skip ReplayGain scanning. By default each produced file is tagged with
+    ReplayGain 2.0 track gain via rsgain (auto-downloaded on first use). The
+    user's own local source files are never modified.
 
 .PARAMETER Playlist
     If the URL points at a playlist, download the whole playlist instead of
@@ -59,6 +67,8 @@ param(
     [switch]$Mp3,
 
     [switch]$Flac,
+
+    [switch]$NoReplayGain,
 
     [switch]$Playlist
 )
@@ -108,6 +118,58 @@ function Install-Tool {
     return $false
 }
 
+function Ensure-Rsgain {
+    # rsgain (ReplayGain 2.0 scanner) isn't in winget, so fetch the win64 zip from
+    # GitHub releases into a local tools cache and add it to PATH for this session.
+    if (Test-Tool 'rsgain') { return $true }
+
+    $toolsDir = Join-Path $env:LOCALAPPDATA 'yt-mp3\tools\rsgain'
+    $exe = Get-ChildItem -Path $toolsDir -Filter 'rsgain.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+
+    if (-not $exe) {
+        $url = 'https://github.com/complexlogic/rsgain/releases/download/v3.7/rsgain-3.7-win64.zip'
+        $zip = Join-Path $env:TEMP 'rsgain-win64.zip'
+        Write-Host "Downloading rsgain (ReplayGain scanner)..." -ForegroundColor Cyan
+        try {
+            New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
+            Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+            Expand-Archive -Path $zip -DestinationPath $toolsDir -Force
+            Remove-Item $zip -ErrorAction SilentlyContinue
+            $exe = Get-ChildItem -Path $toolsDir -Filter 'rsgain.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        }
+        catch {
+            Write-Warning "Could not download rsgain: $($_.Exception.Message)"
+            return $false
+        }
+    }
+
+    if ($exe) {
+        $env:Path = "$($exe.Directory.FullName);$env:Path"
+        return (Test-Tool 'rsgain')
+    }
+    return $false
+}
+
+# Audio containers rsgain can tag (skip anything else, e.g. raw .webm).
+$RgExts = @('.mp3', '.flac', '.ogg', '.oga', '.opus', '.spx',
+            '.m4a', '.mp4', '.wma', '.wav', '.aiff', '.aif', '.wv', '.ape')
+
+function Invoke-ReplayGain {
+    # Write per-file (track) ReplayGain 2.0 tags with clipping protection.
+    param([string[]]$Files)
+    foreach ($f in $Files) {
+        if (-not (Test-Path -LiteralPath $f)) { continue }
+        $name = [System.IO.Path]::GetFileName($f)
+        if ($RgExts -notcontains ([System.IO.Path]::GetExtension($f).ToLower())) {
+            Write-Host "  ReplayGain: skipping unsupported format -> $name" -ForegroundColor DarkGray
+            continue
+        }
+        Write-Host "  ReplayGain: scanning $name" -ForegroundColor DarkGray
+        rsgain custom -s i -c p -p -- $f | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-Warning "  rsgain failed for: $name" }
+    }
+}
+
 # --- Dependency bootstrap ---------------------------------------------------
 $ok = $true
 $ok = (Install-Tool -Name 'yt-dlp' -WingetId 'yt-dlp.yt-dlp' -Manual 'winget install yt-dlp.yt-dlp') -and $ok
@@ -116,6 +178,15 @@ $ok = (Install-Tool -Name 'ffmpeg' -WingetId 'Gyan.FFmpeg'  -Manual 'winget inst
 if (-not $ok) {
     Write-Error 'Required dependencies are missing. See the messages above.'
     exit 1
+}
+
+# ReplayGain scanning is on by default; -NoReplayGain disables it.
+$rgReady = $false
+if (-not $NoReplayGain) {
+    $rgReady = Ensure-Rsgain
+    if (-not $rgReady) {
+        Write-Warning 'ReplayGain scanning unavailable (rsgain missing); continuing without it.'
+    }
 }
 
 # --- Prepare output dir -----------------------------------------------------
@@ -270,6 +341,16 @@ foreach ($u in $Url) {
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "yt-dlp exited with code $LASTEXITCODE for: $u"
         $failed++
+        continue
+    }
+
+    # ReplayGain-scan the files we just produced (never the user's local source).
+    if ($rgReady -and $info -and $info.DlPath) {
+        $outBase  = [System.IO.Path]::GetFullPath($info.DlPath)
+        $produced = @()
+        if ($makeMp3) { $produced += [System.IO.Path]::ChangeExtension($outBase, 'mp3') }
+        if ($keepOriginal -and -not $isLocal) { $produced += $outBase }
+        Invoke-ReplayGain -Files $produced
     }
 }
 

@@ -20,6 +20,14 @@ link gives you the original `.webm`/`.m4a` by default, plus a bitrate-matched
 `.mp3` when you add `-Mp3`. Lossless sources from other sites yt-dlp supports
 are always converted to mp3.
 
+### ReplayGain
+
+Every file the script **produces** is scanned and tagged with **ReplayGain 2.0**
+track gain (via [`rsgain`](https://github.com/complexlogic/rsgain), auto-downloaded
+on first use). Pass `-NoReplayGain` to skip. Your own local source files are
+never retagged — only files the script creates. Formats rsgain can't tag (e.g. a
+raw `.webm` original) are skipped.
+
 > Note: for `-Playlist` downloads the quality decision is probed from the first
 > item and applied to the whole playlist.
 
@@ -61,6 +69,7 @@ Download a whole playlist (off by default):
 | `-OutDir`   | Where to save output. Defaults to the current directory.        |
 | `-Mp3`      | Also create an mp3 for lossy sources (or alongside a kept `-Flac`). |
 | `-Flac`     | Keep a lossless source as-is instead of converting it to mp3.    |
+| `-NoReplayGain` | Skip ReplayGain scanning (on by default).                    |
 | `-Playlist` | Download the full playlist instead of just one video.           |
 
 ## Dependencies
@@ -73,6 +82,10 @@ approval), install them manually and re-run:
 winget install yt-dlp.yt-dlp
 winget install Gyan.FFmpeg
 ```
+
+For ReplayGain it uses [`rsgain`](https://github.com/complexlogic/rsgain), which
+isn't in winget — the script downloads the win64 build from GitHub releases into
+`%LOCALAPPDATA%\yt-mp3\tools` on first use. Skip it all with `-NoReplayGain`.
 
 ## Notes
 
