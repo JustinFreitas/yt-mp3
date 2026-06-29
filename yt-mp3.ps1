@@ -155,18 +155,35 @@ $RgExts = @('.mp3', '.flac', '.ogg', '.oga', '.opus', '.spx',
             '.m4a', '.mp4', '.wma', '.wav', '.aiff', '.aif', '.wv', '.ape')
 
 function Invoke-ReplayGain {
-    # Write per-file (track) ReplayGain 2.0 tags with clipping protection.
+    # Write per-file (track) ReplayGain 2.0 tags with clipping protection, and
+    # report the computed gain/peak so it's visible the scan actually ran.
     param([string[]]$Files)
     foreach ($f in $Files) {
         if (-not (Test-Path -LiteralPath $f)) { continue }
         $name = [System.IO.Path]::GetFileName($f)
         if ($RgExts -notcontains ([System.IO.Path]::GetExtension($f).ToLower())) {
-            Write-Host "  ReplayGain: skipping unsupported format -> $name" -ForegroundColor DarkGray
+            Write-Host "  ReplayGain: skipped (rsgain can't tag this format) -> $name" -ForegroundColor Yellow
             continue
         }
-        Write-Host "  ReplayGain: scanning $name" -ForegroundColor DarkGray
-        rsgain custom -s i -c p -p -- $f | Out-Null
-        if ($LASTEXITCODE -ne 0) { Write-Warning "  rsgain failed for: $name" }
+
+        $out = rsgain custom -s i -c p -p -- $f 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "  ReplayGain: rsgain failed for $name"
+            $out | ForEach-Object { Write-Host "    $_" }
+            continue
+        }
+
+        $gm = $out | Select-String -Pattern 'Gain:\s*(-?[\d.]+\s*dB)' | Select-Object -First 1
+        $pm = $out | Select-String -Pattern 'Peak:\s*([\d.]+)'        | Select-Object -First 1
+        $gain = if ($gm) { $gm.Matches[0].Groups[1].Value } else { '' }
+        $peak = if ($pm) { $pm.Matches[0].Groups[1].Value } else { '' }
+        if ($gain) {
+            $peakNote = if ($peak) { ", peak $peak" } else { '' }
+            Write-Host "  ReplayGain: tagged $name -> track gain $gain$peakNote" -ForegroundColor Green
+        }
+        else {
+            Write-Host "  ReplayGain: tagged $name" -ForegroundColor Green
+        }
     }
 }
 
