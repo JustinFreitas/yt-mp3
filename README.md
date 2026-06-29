@@ -2,6 +2,8 @@
 
 A small PowerShell script that saves the audio of a YouTube link as an MP3.
 
+![yt-mp3 in action](docs/screenshot.png)
+
 It wraps [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) and
 [`ffmpeg`](https://ffmpeg.org/), saving MP3 audio with embedded cover art and
 metadata.
