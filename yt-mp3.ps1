@@ -322,10 +322,24 @@ foreach ($u in $Url) {
         }
     }
 
+    # Path yt-dlp will write to; used to locate the produced file(s) for ReplayGain.
+    $outBase       = if ($info -and $info.DlPath) { [System.IO.Path]::GetFullPath($info.DlPath) } else { '' }
+    $producedFiles = @()
+
     if (-not $makeMp3) {
         # Save the original audio stream as-is (no transcode).
-        Write-Host "  Source is $codecLabel -> saving original audio as-is." -ForegroundColor DarkGray
         $runArgs = @()
+        if ($codecLabel -match '^opus') {
+            # Opus is delivered in a .webm container that rsgain can't tag; losslessly
+            # remux it to .opus (repackage only, no re-encode) so ReplayGain applies.
+            $runArgs += @('--remux-video', 'opus')
+            Write-Host "  Source is $codecLabel -> saving original audio (remuxed to .opus, no re-encode)." -ForegroundColor DarkGray
+            if ($outBase) { $producedFiles = @([System.IO.Path]::ChangeExtension($outBase, 'opus')) }
+        }
+        else {
+            Write-Host "  Source is $codecLabel -> saving original audio as-is." -ForegroundColor DarkGray
+            if ($outBase) { $producedFiles = @($outBase) }
+        }
     }
     elseif ($isLossless) {
         # Lossless -> compress down to high-quality MP3 (V0, ~245 kbps).
@@ -333,6 +347,10 @@ foreach ($u in $Url) {
         Write-Host "  Source is lossless ($codecLabel) -> ${keepNote}MP3 V0." -ForegroundColor DarkGray
         $runArgs = @('-x', '--audio-format', 'mp3', '--audio-quality', $VbrV0, '--embed-thumbnail')
         if ($keepOriginal -and -not $isLocal) { $runArgs += '-k' }
+        if ($outBase) {
+            $producedFiles = @([System.IO.Path]::ChangeExtension($outBase, 'mp3'))
+            if ($keepOriginal -and -not $isLocal) { $producedFiles += $outBase }
+        }
     }
     else {
         # Lossy + -Mp3 -> MP3 capped at the source bitrate so it never exceeds it
@@ -349,6 +367,10 @@ foreach ($u in $Url) {
         Write-Host "  Source is lossy ($codecLabel $srcAbr kbps) -> ${keepNote}MP3 at $note." -ForegroundColor DarkGray
         $runArgs = @('-x', '--audio-format', 'mp3', '--audio-quality', $quality, '--embed-thumbnail')
         if ($keepOriginal -and -not $isLocal) { $runArgs += '-k' }
+        if ($outBase) {
+            $producedFiles = @([System.IO.Path]::ChangeExtension($outBase, 'mp3'))
+            if ($keepOriginal -and -not $isLocal) { $producedFiles += $outBase }
+        }
     }
 
     if ($forceKeep -and ($runArgs -notcontains '-k')) { $runArgs += '-k' }
@@ -362,12 +384,8 @@ foreach ($u in $Url) {
     }
 
     # ReplayGain-scan the files we just produced (never the user's local source).
-    if ($rgReady -and $info -and $info.DlPath) {
-        $outBase  = [System.IO.Path]::GetFullPath($info.DlPath)
-        $produced = @()
-        if ($makeMp3) { $produced += [System.IO.Path]::ChangeExtension($outBase, 'mp3') }
-        if ($keepOriginal -and -not $isLocal) { $produced += $outBase }
-        Invoke-ReplayGain -Files $produced
+    if ($rgReady -and $producedFiles.Count -gt 0) {
+        Invoke-ReplayGain -Files $producedFiles
     }
 }
 

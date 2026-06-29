@@ -16,9 +16,10 @@ It is **source-aware** about quality:
   above it, with a V0 ceiling for high-bitrate sources).
 
 Because **YouTube audio is always lossy** (Opus ~129 kbps, or AAC), a YouTube
-link gives you the original `.webm`/`.m4a` by default, plus a bitrate-matched
-`.mp3` when you add `-Mp3`. Lossless sources from other sites yt-dlp supports
-are always converted to mp3.
+link saves the original audio by default, plus a bitrate-matched `.mp3` when you
+add `-Mp3`. Opus is losslessly remuxed from its `.webm` container to `.opus`
+(repackage only, no re-encode) so ReplayGain can tag it. Lossless sources from
+other sites yt-dlp supports are always converted to mp3.
 
 ### ReplayGain
 
