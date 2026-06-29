@@ -75,6 +75,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Decode native-command output (e.g. yt-dlp's --print filename) as UTF-8 so
+# non-ASCII characters in titles/paths survive capture. Paired with yt-dlp's
+# --encoding utf-8 below.
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+
 function Refresh-Path {
     # Re-read PATH from machine + user scopes so freshly winget-installed exes resolve.
     $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
@@ -159,8 +164,11 @@ function Invoke-ReplayGain {
     # report the computed gain/peak so it's visible the scan actually ran.
     param([string[]]$Files)
     foreach ($f in $Files) {
-        if (-not (Test-Path -LiteralPath $f)) { continue }
         $name = [System.IO.Path]::GetFileName($f)
+        if (-not (Test-Path -LiteralPath $f)) {
+            Write-Warning "  ReplayGain: expected output not found, skipping -> $name"
+            continue
+        }
         if ($RgExts -notcontains ([System.IO.Path]::GetExtension($f).ToLower())) {
             Write-Host "  ReplayGain: skipped (rsgain can't tag this format) -> $name" -ForegroundColor Yellow
             continue
@@ -225,7 +233,7 @@ function Get-AudioInfo {
     # Probe the best audio stream without downloading (--print implies simulate).
     # Also reports the path yt-dlp would download to (so we can guard local files).
     param([string]$TargetUrl, [string[]]$ExtraArgs = @())
-    $probeArgs = @('-f', 'bestaudio/best', '--no-warnings',
+    $probeArgs = @('-f', 'bestaudio/best', '--no-warnings', '--encoding', 'utf-8',
                    '--print', '%(acodec)s|%(abr)s', '--print', 'filename',
                    '-o', $OutTemplate) + $ExtraArgs
     if (-not $Playlist) { $probeArgs += '--no-playlist' }
@@ -255,6 +263,7 @@ $OutTemplate = (Join-Path $OutDir '%(title)s.%(ext)s')
 # audio containers like webm don't support thumbnail embedding.
 $commonArgs = @(
     '-f', 'bestaudio/best'
+    '--encoding', 'utf-8'
     '--embed-metadata'
     '-o', $OutTemplate
 )
