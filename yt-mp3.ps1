@@ -134,10 +134,19 @@ function Ensure-Rsgain {
     if (-not $exe) {
         $url = 'https://github.com/complexlogic/rsgain/releases/download/v3.7/rsgain-3.7-win64.zip'
         $zip = Join-Path $env:TEMP 'rsgain-win64.zip'
+        $expectedHash = '8D6E16D1AF5A805FB2DD6183E11F4F8BC51240F8A896FD37AB8FCA655BB70800'
         Write-Host "Downloading rsgain (ReplayGain scanner)..." -ForegroundColor Cyan
         try {
             New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
             Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+            
+            $actualHash = (Get-FileHash -Path $zip -Algorithm SHA256).Hash
+            if ($actualHash -ne $expectedHash) {
+                Remove-Item -Path $zip -Force -ErrorAction SilentlyContinue
+                Write-Warning "rsgain download checksum mismatch!`nExpected: $expectedHash`nActual:   $actualHash"
+                return $false
+            }
+            
             Expand-Archive -Path $zip -DestinationPath $toolsDir -Force
             Remove-Item $zip -ErrorAction SilentlyContinue
             $exe = Get-ChildItem -Path $toolsDir -Filter 'rsgain.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -220,6 +229,26 @@ if (-not (Test-Path -LiteralPath $OutDir)) {
 }
 $OutDir = (Resolve-Path -LiteralPath $OutDir).Path
 
+# --- Playlist Expansion -----------------------------------------------------
+if ($Playlist) {
+    Write-Host "`nExpanding playlist(s)..." -ForegroundColor Cyan
+    $expandedUrls = @()
+    foreach ($u in $Url) {
+        if (Test-Path -LiteralPath $u -PathType Leaf) {
+            $expandedUrls += $u
+        } else {
+            $flat = @(yt-dlp --flat-playlist --print webpage_url -- $u 2>$null)
+            if ($flat.Count -gt 0) {
+                $expandedUrls += $flat
+            } else {
+                $expandedUrls += $u
+            }
+        }
+    }
+    $Url = $expandedUrls
+    $Playlist = $false
+}
+
 # --- Source-aware quality helpers ------------------------------------------
 
 # V0 VBR (~245 kbps) is the target when compressing a lossless source.
@@ -251,7 +280,7 @@ function Get-Bitrate {
     # Parse a bitrate string to a rounded integer kbps; 0 if unknown.
     param([string]$Value)
     $n = 0.0
-    if ([double]::TryParse($Value, [ref]$n) -and $n -gt 0) { return [int][math]::Round($n) }
+    if ([double]::TryParse($Value, [System.Globalization.NumberStyles]::Any, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$n) -and $n -gt 0) { return [int][math]::Round($n) }
     return 0
 }
 
@@ -390,6 +419,23 @@ foreach ($u in $Url) {
         Write-Warning "yt-dlp exited with code $LASTEXITCODE for: $u"
         $failed++
         continue
+    }
+
+    # Post-process kept original if it's Opus in a webm container
+    if ($keepOriginal -and -not $isLocal -and $makeMp3 -and $codecLabel -match '^opus' -and $outBase) {
+        $webmFile = $outBase
+        if (Test-Path -LiteralPath $webmFile) {
+            $opusFile = [System.IO.Path]::ChangeExtension($webmFile, 'opus')
+            Write-Host "  Remuxing kept original to .opus..." -ForegroundColor DarkGray
+            ffmpeg -y -i $webmFile -c copy $opusFile -loglevel error
+            if ($LASTEXITCODE -eq 0) {
+                Remove-Item -LiteralPath $webmFile -Force
+                $producedFiles = @($producedFiles | Where-Object { $_ -ne $webmFile })
+                $producedFiles += $opusFile
+            } else {
+                Write-Warning "  Failed to remux $webmFile to .opus"
+            }
+        }
     }
 
     # ReplayGain-scan the files we just produced (never the user's local source).

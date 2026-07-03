@@ -31,9 +31,6 @@ on first use). Pass `-NoReplayGain` to skip. Your own local source files are
 never retagged — only files the script creates. Formats rsgain can't tag (e.g. a
 raw `.webm` original) are skipped.
 
-> Note: for `-Playlist` downloads the quality decision is probed from the first
-> item and applied to the whole playlist.
-
 ## Usage
 
 ```powershell
