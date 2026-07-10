@@ -62,7 +62,7 @@ param(
     [Parameter(Mandatory = $true, Position = 0, ValueFromRemainingArguments = $true)]
     [string[]]$Url,
 
-    [string]$OutDir = (Get-Location).Path,
+    [string]$OutDir = $PWD.ProviderPath,
 
     [switch]$Mp3,
 
@@ -81,10 +81,19 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 function Refresh-Path {
-    # Re-read PATH from machine + user scopes so freshly winget-installed exes resolve.
+    # Re-read PATH from machine + user scopes so freshly winget-installed exes resolve,
+    # merging them with the current session paths without overwriting existing session-added paths.
     $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $user    = [Environment]::GetEnvironmentVariable('Path', 'User')
-    $env:Path = (@($machine, $user) | Where-Object { $_ }) -join ';'
+    $registryPaths = (@($machine, $user) | Where-Object { $_ }) -join ';' -split ';'
+    $currentPaths = $env:Path -split ';'
+    
+    $newPaths = foreach ($path in $registryPaths) {
+        if ($path -and $currentPaths -notcontains $path) { $path }
+    }
+    if ($newPaths) {
+        $env:Path = ($currentPaths + $newPaths) -join ';'
+    }
 }
 
 function Test-Tool {
@@ -133,7 +142,7 @@ function Ensure-Rsgain {
 
     if (-not $exe) {
         $url = 'https://github.com/complexlogic/rsgain/releases/download/v3.7/rsgain-3.7-win64.zip'
-        $zip = Join-Path $env:TEMP 'rsgain-win64.zip'
+        $zip = Join-Path ([System.IO.Path]::GetTempPath()) 'rsgain-win64.zip'
         $expectedHash = '8D6E16D1AF5A805FB2DD6183E11F4F8BC51240F8A896FD37AB8FCA655BB70800'
         Write-Host "Downloading rsgain (ReplayGain scanner)..." -ForegroundColor Cyan
         try {
@@ -211,7 +220,7 @@ $ok = (Install-Tool -Name 'ffmpeg' -WingetId 'Gyan.FFmpeg'  -Manual 'winget inst
 
 if (-not $ok) {
     Write-Error 'Required dependencies are missing. See the messages above.'
-    exit 1
+    if ($MyInvocation.InvocationName -eq '.') { return } else { exit 1 }
 }
 
 # ReplayGain scanning is on by default; -NoReplayGain disables it.
@@ -450,7 +459,7 @@ if ($skipped -gt 0) {
 
 if ($failed -gt 0) {
     Write-Error "$failed of $($Url.Count) download(s) failed."
-    exit 1
+    if ($MyInvocation.InvocationName -eq '.') { return } else { exit 1 }
 }
 
 Write-Host "`nDone. Output saved to: $OutDir" -ForegroundColor Green
